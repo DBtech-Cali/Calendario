@@ -61,6 +61,11 @@
             color: white;
         }
 
+        .status-syncing {
+            background: #ffc107;
+            color: black;
+        }
+
         .main-content {
             display: grid;
             grid-template-columns: 1fr 400px;
@@ -176,6 +181,11 @@
 
         .attention-marker.completed {
             background: #28a745;
+        }
+
+        .attention-marker.partial {
+            background: #ffc107;
+            color: black;
         }
 
         .form-group {
@@ -391,6 +401,28 @@
             border: 1px solid #f5c6cb;
         }
 
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #c3e6cb;
+        }
+
+        .sync-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            display: none;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -419,6 +451,7 @@
         </div>
 
         <div id="errorContainer"></div>
+        <div id="successContainer"></div>
 
         <div class="main-content">
             <div class="calendar-section">
@@ -511,6 +544,11 @@
         </div>
     </div>
 
+    <!-- Indicador de sincronización -->
+    <div id="syncIndicator" class="sync-indicator">
+        Sincronizando...
+    </div>
+
     <!-- Firebase SDK -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
@@ -527,7 +565,7 @@
             appId: "1:382459743103:web:94361482f911749575e84a"
         };
 
-        // Configuración de la ruta de atención actualizada
+        // Configuración de la ruta de atención
         const attentionRoute = [
             { name: 'PRELIMINAR', type: 'days_from_start', value: 9 },
             { name: 'INTEGRADORA', type: 'days_from_start', value: 22 },
@@ -558,6 +596,28 @@
         let currentModalData = null;
         let database = null;
         let isOnline = false;
+        let syncQueue = [];
+        let isSyncing = false;
+
+        // Función para mostrar indicador de sincronización
+        function showSyncIndicator(message = 'Sincronizando...') {
+            const indicator = document.getElementById('syncIndicator');
+            indicator.textContent = message;
+            indicator.style.display = 'block';
+        }
+
+        function hideSyncIndicator() {
+            document.getElementById('syncIndicator').style.display = 'none';
+        }
+
+        // Función para mostrar mensajes de éxito
+        function showSuccess(message) {
+            const successContainer = document.getElementById('successContainer');
+            successContainer.innerHTML = `<div class="success-message">${message}</div>`;
+            setTimeout(() => {
+                successContainer.innerHTML = '';
+            }, 5000);
+        }
 
         // Función para calcular fechas de atención
         function calculateAttentionDate(startDate, attention) {
@@ -574,19 +634,15 @@
                     break;
                     
                 case 'days_from_plan':
-                    // Primero calculamos la fecha del PLAN (1 mes desde el inicio)
                     const planDate = new Date(start);
                     planDate.setMonth(start.getMonth() + 1);
-                    // Luego agregamos los días desde el PLAN
                     attentionDate = new Date(planDate);
                     attentionDate.setDate(planDate.getDate() + attention.value);
                     break;
                     
                 case 'months_from_plan':
-                    // Primero calculamos la fecha del PLAN (1 mes desde el inicio)
                     const planDate2 = new Date(start);
                     planDate2.setMonth(start.getMonth() + 1);
-                    // Luego agregamos los meses desde el PLAN
                     attentionDate = new Date(planDate2);
                     attentionDate.setMonth(planDate2.getMonth() + attention.value);
                     break;
@@ -616,9 +672,12 @@
             
             // Mostrar calendario inicial
             updateCalendar();
+
+            // Configurar sincronización periódica
+            setInterval(processSyncQueue, 5000);
         });
 
-        // Inicializar Firebase
+        // Inicializar Firebase con mejor manejo de errores
         function initializeFirebase() {
             try {
                 console.log('Inicializando Firebase...');
@@ -629,6 +688,10 @@
 
                 firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
+                
+                // Configurar persistencia offline
+                database.goOffline();
+                database.goOnline();
                 
                 // Configurar listeners para datos en tiempo real
                 setupRealtimeListeners();
@@ -643,69 +706,120 @@
             }
         }
 
-        // Configurar listeners de Firebase
+        // Configurar listeners de Firebase mejorados
         function setupRealtimeListeners() {
             try {
-                // Listener de conexión
+                // Listener de conexión mejorado
                 database.ref('.info/connected').on('value', (snapshot) => {
                     const connected = snapshot.val();
                     console.log('Estado de conexión:', connected);
                     updateConnectionStatus(connected);
                     
-                    if (connected && users.length === 0) {
-                        // Cargar datos cuando se conecte
-                        loadFirebaseData();
+                    if (connected) {
+                        // Procesar cola de sincronización cuando se reconecte
+                        processSyncQueue();
+                        
+                        if (users.length === 0) {
+                            loadFirebaseData();
+                        }
                     }
                 });
 
-                // Listener para usuarios
+                // Listener para usuarios con manejo mejorado
                 database.ref('users').on('value', (snapshot) => {
-                    console.log('Datos de usuarios actualizados');
+                    console.log('Datos de usuarios actualizados desde Firebase');
                     const data = snapshot.val();
-                    users = data ? Object.values(data) : [];
-                    updateUserList();
-                    updateCalendar();
-                    updateStats();
+                    const newUsers = data ? Object.values(data) : [];
+                    
+                    // Solo actualizar si hay cambios reales
+                    if (JSON.stringify(newUsers) !== JSON.stringify(users)) {
+                        users = newUsers;
+                        updateUserList();
+                        updateCalendar();
+                        updateStats();
+                        saveLocalData(); // Backup local
+                    }
+                }, (error) => {
+                    console.error('Error en listener de usuarios:', error);
                 });
 
-                // Listener para atenciones
+                // Listener para atenciones con manejo mejorado
                 database.ref('attentions').on('value', (snapshot) => {
-                    console.log('Datos de atenciones actualizados');
+                    console.log('Datos de atenciones actualizados desde Firebase');
                     const data = snapshot.val();
-                    attentions = data || {};
-                    updateCalendar();
-                    updateStats();
+                    const newAttentions = data || {};
+                    
+                    // Solo actualizar si hay cambios reales
+                    if (JSON.stringify(newAttentions) !== JSON.stringify(attentions)) {
+                        attentions = newAttentions;
+                        updateCalendar();
+                        updateStats();
+                        saveLocalData(); // Backup local
+                        
+                        // Notificar cambios si hay un modal abierto
+                        if (currentModalData) {
+                            updateModalFromData();
+                        }
+                    }
+                }, (error) => {
+                    console.error('Error en listener de atenciones:', error);
                 });
 
             } catch (error) {
                 console.error('Error configurando listeners:', error);
-                showError('Error configurando listeners: ' + error.message);
+                showError('Error configurando sincronización: ' + error.message);
             }
+        }
+
+        // Actualizar modal desde datos sincronizados
+        function updateModalFromData() {
+            if (!currentModalData) return;
+            
+            const attentionKey = `${currentModalData.user.id}_${currentModalData.type}`;
+            const savedAttention = attentions[attentionKey] || {};
+            
+            // Actualizar checkboxes sin disparar eventos
+            ['psicologia', 'trabajoSocial', 'pedagogia', 'nutricion'].forEach(service => {
+                const checkbox = document.getElementById(service);
+                if (checkbox) {
+                    checkbox.checked = savedAttention[service] || false;
+                }
+            });
+            
+            updateAttentionVisual();
         }
 
         // Cargar datos de Firebase
         function loadFirebaseData() {
-            database.ref('users').once('value').then((snapshot) => {
-                const data = snapshot.val();
-                users = data ? Object.values(data) : [];
+            showSyncIndicator('Cargando datos...');
+            
+            Promise.all([
+                database.ref('users').once('value'),
+                database.ref('attentions').once('value')
+            ]).then(([usersSnapshot, attentionsSnapshot]) => {
+                const userData = usersSnapshot.val();
+                const attentionData = attentionsSnapshot.val();
+                
+                users = userData ? Object.values(userData) : [];
+                attentions = attentionData || {};
+                
                 updateUserList();
                 updateCalendar();
                 updateStats();
+                saveLocalData();
+                
+                hideSyncIndicator();
+                console.log('Datos cargados desde Firebase:', users.length, 'usuarios');
+                
             }).catch((error) => {
-                console.error('Error cargando usuarios:', error);
-            });
-
-            database.ref('attentions').once('value').then((snapshot) => {
-                const data = snapshot.val();
-                attentions = data || {};
-                updateCalendar();
-                updateStats();
-            }).catch((error) => {
-                console.error('Error cargando atenciones:', error);
+                console.error('Error cargando datos:', error);
+                showError('Error cargando datos: ' + error.message);
+                hideSyncIndicator();
+                loadLocalData();
             });
         }
 
-        // Actualizar estado de conexión
+        // Actualizar estado de conexión mejorado
         function updateConnectionStatus(connected) {
             isOnline = connected;
             const statusElement = document.getElementById('connectionStatus');
@@ -716,6 +830,82 @@
             } else {
                 statusElement.textContent = '🔴 Sin conexión';
                 statusElement.className = 'connection-status status-offline';
+            }
+        }
+
+        // Cola de sincronización mejorada
+        function addToSyncQueue(operation) {
+            syncQueue.push({
+                ...operation,
+                timestamp: Date.now(),
+                retries: 0
+            });
+            
+            if (isOnline) {
+                processSyncQueue();
+            }
+        }
+
+        // Procesar cola de sincronización
+        async function processSyncQueue() {
+            if (!isOnline || isSyncing || syncQueue.length === 0) {
+                return;
+            }
+            
+            isSyncing = true;
+            showSyncIndicator(`Sincronizando ${syncQueue.length} cambios...`);
+            
+            const queue = [...syncQueue];
+            syncQueue = [];
+            
+            for (const operation of queue) {
+                try {
+                    await executeOperation(operation);
+                    console.log('Operación sincronizada:', operation.type);
+                } catch (error) {
+                    console.error('Error en operación:', error);
+                    
+                    // Reintentar hasta 3 veces
+                    if (operation.retries < 3) {
+                        operation.retries++;
+                        syncQueue.push(operation);
+                    } else {
+                        console.error('Operación falló después de 3 intentos:', operation);
+                        showError('No se pudo sincronizar algunos cambios. Se guardaron localmente.');
+                    }
+                }
+            }
+            
+            isSyncing = false;
+            hideSyncIndicator();
+            
+            if (syncQueue.length === 0) {
+                showSuccess('Todos los cambios sincronizados correctamente');
+            }
+        }
+
+        // Ejecutar operación de sincronización
+        async function executeOperation(operation) {
+            switch (operation.type) {
+                case 'addUser':
+                    await database.ref(`users/${operation.data.id}`).set(operation.data);
+                    break;
+                case 'updateUser':
+                    await database.ref(`users/${operation.data.id}`).update(operation.data);
+                    break;
+                case 'removeUser':
+                    await database.ref(`users/${operation.userId}`).remove();
+                    break;
+                case 'saveAttention':
+                    await database.ref(`attentions/${operation.key}`).set(operation.data);
+                    break;
+                case 'removeUserAttentions':
+                    const updates = {};
+                    operation.keys.forEach(key => {
+                        updates[key] = null;
+                    });
+                    await database.ref('attentions').update(updates);
+                    break;
             }
         }
 
@@ -748,42 +938,17 @@
             }
         }
 
-        // Guardar datos - función mejorada para sincronización
-        async function saveData() {
-            if (isOnline && database) {
-                try {
-                    // Guardar usuarios en Firebase
-                    const usersObj = {};
-                    users.forEach(user => {
-                        usersObj[user.id] = user;
-                    });
-                    await database.ref('users').set(usersObj);
-                    
-                    // Guardar atenciones en Firebase
-                    await database.ref('attentions').set(attentions);
-                    
-                    console.log('Datos sincronizados con Firebase exitosamente');
-                } catch (error) {
-                    console.error('Error guardando en Firebase, usando backup local:', error);
-                    saveLocalData();
-                }
-            } else {
-                saveLocalData();
-            }
-        }
-
         // Guardar datos localmente
         function saveLocalData() {
             try {
                 localStorage.setItem('emj_users', JSON.stringify(users));
                 localStorage.setItem('emj_attentions', JSON.stringify(attentions));
-                console.log('Datos guardados localmente');
             } catch (error) {
                 console.error('Error guardando datos localmente:', error);
             }
         }
 
-        // Agregar usuario
+        // Agregar usuario con sincronización mejorada
         async function addUser() {
             const name = document.getElementById('userName').value.trim();
             const date = document.getElementById('userDate').value;
@@ -804,91 +969,83 @@
                     id: Date.now(),
                     name: name,
                     startDate: date,
-                    egreso: false
+                    egreso: false,
+                    createdAt: new Date().toISOString()
                 };
                 
-                // Agregar a la lista local primero
+                // Agregar a la lista local inmediatamente para mejor UX
                 users.push(user);
-                
-                // Guardar en Firebase si está conectado
-                if (isOnline && database) {
-                    try {
-                        await database.ref(`users/${user.id}`).set(user);
-                        console.log('Usuario guardado en Firebase:', user.id);
-                    } catch (firebaseError) {
-                        console.error('Error guardando en Firebase, usando local:', firebaseError);
-                        saveLocalData();
-                    }
-                } else {
-                    // Guardar localmente
-                    saveLocalData();
-                }
-                
-                // Actualizar interfaz
                 updateUserList();
                 updateCalendar();
                 updateStats();
+                saveLocalData();
+                
+                // Agregar a la cola de sincronización
+                addToSyncQueue({
+                    type: 'addUser',
+                    data: user
+                });
                 
                 // Limpiar formulario
                 document.getElementById('userName').value = '';
                 document.getElementById('userDate').value = new Date().toISOString().split('T')[0];
                 
+                showSuccess(`Usuario "${name}" agregado correctamente`);
                 console.log('Usuario agregado exitosamente');
                 
             } catch (error) {
                 console.error('Error agregando usuario:', error);
                 showError('Error al agregar usuario: ' + error.message);
+                
+                // Revertir cambio local en caso de error
+                users = users.filter(u => u.id !== user.id);
+                updateUserList();
+                updateCalendar();
+                updateStats();
             } finally {
                 addBtn.disabled = false;
                 addBtn.textContent = '➕ Agregar Usuario';
             }
         }
 
-        // Eliminar usuario
+        // Eliminar usuario con sincronización mejorada
         async function removeUser(userId) {
             if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
                 try {
-                    // Eliminar de la lista local
+                    const userToRemove = users.find(u => u.id === userId);
+                    
+                    // Eliminar de la lista local inmediatamente
                     users = users.filter(user => user.id !== userId);
                     
-                    // Eliminar atenciones del usuario
-                    Object.keys(attentions).forEach(key => {
-                        if (key.startsWith(userId + '_')) {
-                            delete attentions[key];
-                        }
+                    // Encontrar y eliminar atenciones del usuario
+                    const userAttentionKeys = Object.keys(attentions).filter(key => 
+                        key.startsWith(userId + '_')
+                    );
+                    
+                    userAttentionKeys.forEach(key => {
+                        delete attentions[key];
                     });
                     
-                    // Eliminar de Firebase si está conectado
-                    if (isOnline && database) {
-                        try {
-                            await database.ref(`users/${userId}`).remove();
-                            
-                            // Eliminar atenciones del usuario en Firebase
-                            const userAttentions = {};
-                            Object.keys(attentions).forEach(key => {
-                                if (key.startsWith(userId + '_')) {
-                                    userAttentions[key] = null; // null elimina en Firebase
-                                }
-                            });
-                            
-                            if (Object.keys(userAttentions).length > 0) {
-                                await database.ref('attentions').update(userAttentions);
-                            }
-                            
-                            console.log('Usuario eliminado de Firebase:', userId);
-                        } catch (firebaseError) {
-                            console.error('Error eliminando de Firebase, usando local:', firebaseError);
-                            saveLocalData();
-                        }
-                    } else {
-                        saveLocalData();
-                    }
-                    
-                    // Actualizar interfaz
+                    // Actualizar interfaz inmediatamente
                     updateUserList();
                     updateCalendar();
                     updateStats();
+                    saveLocalData();
                     
+                    // Agregar a la cola de sincronización
+                    addToSyncQueue({
+                        type: 'removeUser',
+                        userId: userId
+                    });
+                    
+                    if (userAttentionKeys.length > 0) {
+                        addToSyncQueue({
+                            type: 'removeUserAttentions',
+                            keys: userAttentionKeys
+                        });
+                    }
+                    
+                    showSuccess(`Usuario "${userToRemove?.name || 'Usuario'}" eliminado correctamente`);
                     console.log('Usuario eliminado exitosamente');
                     
                 } catch (error) {
@@ -898,7 +1055,7 @@
             }
         }
 
-        // Marcar egreso
+        // Marcar egreso con sincronización mejorada
         async function markEgreso() {
             if (currentModalData) {
                 const egresoBtn = document.getElementById('egresoBtn');
@@ -906,29 +1063,26 @@
                 egresoBtn.textContent = '⏳ Procesando...';
                 
                 try {
-                    // Actualizar localmente
+                    // Actualizar localmente inmediatamente
                     const user = users.find(u => u.id === currentModalData.userId);
                     if (user) {
                         user.egreso = true;
+                        user.egresoDate = new Date().toISOString();
                         
-                        // Actualizar en Firebase si está conectado
-                        if (isOnline && database) {
-                            try {
-                                await database.ref(`users/${currentModalData.userId}/egreso`).set(true);
-                                console.log('Egreso marcado en Firebase:', currentModalData.userId);
-                            } catch (firebaseError) {
-                                console.error('Error marcando egreso en Firebase:', firebaseError);
-                                saveLocalData();
-                            }
-                        } else {
-                            saveLocalData();
-                        }
-                        
-                        // Actualizar interfaz
+                        // Actualizar interfaz inmediatamente
                         updateUserList();
                         updateCalendar();
                         updateStats();
+                        saveLocalData();
+                        
+                        // Agregar a la cola de sincronización
+                        addToSyncQueue({
+                            type: 'updateUser',
+                            data: user
+                        });
+                        
                         closeModal();
+                        showSuccess(`Egreso marcado para "${user.name}"`);
                     }
                 } catch (error) {
                     console.error('Error marcando egreso:', error);
@@ -940,7 +1094,7 @@
             }
         }
 
-        // Actualizar calendario
+        // Actualizar calendario con mejor indicación de estados
         function updateCalendar() {
             const year = currentDate.getFullYear();
             const month = currentDate.getMonth();
@@ -985,22 +1139,27 @@
                 
                 dayElement.innerHTML = `<div class="day-number">${cellDate.getDate()}</div>`;
                 
-                // Agregar marcadores de atención
+                // Agregar marcadores de atención con mejor estado visual
                 const attentionsForDay = getAttentionsForDate(cellDate);
                 attentionsForDay.forEach(attention => {
                     const marker = document.createElement('div');
                     marker.className = 'attention-marker';
                     
-                    // Verificar si está completada
+                    // Verificar estado de completación
                     const attentionKey = `${attention.user.id}_${attention.type}`;
                     const savedAttention = attentions[attentionKey];
-                    const isCompleted = savedAttention && Object.values(savedAttention).filter(Boolean).length === 4;
+                    const completedServices = savedAttention ? 
+                        Object.values(savedAttention).filter(Boolean).length : 0;
                     
-                    if (isCompleted) {
+                    if (completedServices === 4) {
                         marker.classList.add('completed');
+                    } else if (completedServices > 0) {
+                        marker.classList.add('partial');
                     }
                     
                     marker.textContent = `${attention.user.name.split(' ')[0]} - ${attention.type}`;
+                    marker.title = `${attention.user.name} - ${attention.type}\nCompletado: ${completedServices}/4 servicios`;
+                    
                     marker.onclick = (e) => {
                         e.stopPropagation();
                         openAttentionModal(attention);
@@ -1047,7 +1206,7 @@
             updateStats();
         }
 
-        // Modal de atenciones
+        // Modal de atenciones mejorado
         function openAttentionModal(attention) {
             currentModalData = attention;
             document.getElementById('modalTitle').textContent = attention.type;
@@ -1061,11 +1220,53 @@
             ['psicologia', 'trabajoSocial', 'pedagogia', 'nutricion'].forEach(service => {
                 const checkbox = document.getElementById(service);
                 checkbox.checked = savedAttention[service] || false;
-                checkbox.onchange = updateAttentionVisual;
+                
+                // Agregar listener para auto-guardado
+                checkbox.onchange = function() {
+                    updateAttentionVisual();
+                    autoSaveAttention();
+                };
             });
             
             updateAttentionVisual();
             document.getElementById('attentionModal').style.display = 'block';
+        }
+
+        // Auto-guardado cuando se cambia un checkbox
+        function autoSaveAttention() {
+            if (!currentModalData) return;
+            
+            const attentionKey = `${currentModalData.user.id}_${currentModalData.type}`;
+            const attentionData = {};
+            
+            ['psicologia', 'trabajoSocial', 'pedagogia', 'nutricion'].forEach(service => {
+                attentionData[service] = document.getElementById(service).checked;
+            });
+            
+            // Actualizar en memoria inmediatamente
+            attentions[attentionKey] = {
+                ...attentions[attentionKey],
+                ...attentionData,
+                lastModified: new Date().toISOString()
+            };
+            
+            // Guardar localmente
+            saveLocalData();
+            
+            // Agregar a la cola de sincronización
+            addToSyncQueue({
+                type: 'saveAttention',
+                key: attentionKey,
+                data: attentions[attentionKey]
+            });
+            
+            // Actualizar interfaz
+            updateCalendar();
+            updateStats();
+            
+            // Mostrar indicador visual temporal
+            showSyncIndicator('Guardando...');
+            setTimeout(hideSyncIndicator, 1000);
         }
 
         // Actualizar visual de atenciones
@@ -1081,7 +1282,7 @@
             });
         }
 
-        // Guardar atención
+        // Guardar atención (función manual mejorada)
         async function saveAttention() {
             if (!currentModalData) return;
             
@@ -1090,34 +1291,9 @@
             saveBtn.textContent = '⏳ Guardando...';
             
             try {
-                const attentionKey = `${currentModalData.user.id}_${currentModalData.type}`;
-                const attentionData = {};
+                autoSaveAttention(); // Usar la función de auto-guardado
                 
-                ['psicologia', 'trabajoSocial', 'pedagogia', 'nutricion'].forEach(service => {
-                    attentionData[service] = document.getElementById(service).checked;
-                });
-                
-                // Actualizar en memoria primero
-                attentions[attentionKey] = attentionData;
-                
-                // Guardar específicamente en Firebase si está conectado
-                if (isOnline && database) {
-                    try {
-                        await database.ref(`attentions/${attentionKey}`).set(attentionData);
-                        console.log('Atención guardada en Firebase:', attentionKey);
-                    } catch (firebaseError) {
-                        console.error('Error guardando en Firebase, usando local:', firebaseError);
-                        saveLocalData();
-                    }
-                } else {
-                    // Guardar localmente
-                    saveLocalData();
-                }
-                
-                // Actualizar interfaz
-                updateCalendar();
-                updateStats();
-                
+                showSuccess('Atención guardada correctamente');
                 closeModal();
                 console.log('Atención guardada exitosamente');
                 
@@ -1147,12 +1323,38 @@
             
             userList.innerHTML = '';
             
-            users.forEach(user => {
+            // Ordenar usuarios por fecha de ingreso (más recientes primero)
+            const sortedUsers = [...users].sort((a, b) => 
+                new Date(b.startDate) - new Date(a.startDate)
+            );
+            
+            sortedUsers.forEach(user => {
                 const userItem = document.createElement('div');
                 userItem.className = 'user-item';
+                
+                // Calcular progreso del usuario
+                let totalAttentions = 0;
+                let completedAttentions = 0;
+                
+                attentionRoute.forEach(attention => {
+                    const attentionKey = `${user.id}_${attention.name}`;
+                    const savedAttention = attentions[attentionKey];
+                    totalAttentions++;
+                    
+                    if (savedAttention && Object.values(savedAttention).filter(Boolean).length === 4) {
+                        completedAttentions++;
+                    }
+                });
+                
+                const progressPercent = totalAttentions > 0 ? Math.round((completedAttentions / totalAttentions) * 100) : 0;
+                
                 userItem.innerHTML = `
                     <div class="user-name">${user.name} ${user.egreso ? '(EGRESO)' : ''}</div>
                     <div class="user-date">Ingreso: ${new Date(user.startDate).toLocaleDateString('es-ES')}</div>
+                    <div class="user-date">Progreso: ${completedAttentions}/${totalAttentions} (${progressPercent}%)</div>
+                    <div class="progress-bar" style="margin-top: 10px;">
+                        <div class="progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
                     <button class="btn btn-danger" onclick="removeUser(${user.id})" style="margin-top: 10px;">🗑️ Eliminar</button>
                 `;
                 userList.appendChild(userItem);
@@ -1221,16 +1423,30 @@
         // Manejar errores no capturados
         window.addEventListener('error', function(event) {
             console.error('Error global:', event.error);
-            showError('Ocurrió un error inesperado. Revisa la consola para más detalles.');
+            showError('Ocurrió un error inesperado. La aplicación continuará funcionando.');
         });
 
         window.addEventListener('unhandledrejection', function(event) {
             console.error('Promesa rechazada:', event.reason);
-            showError('Error de conexión. La aplicación funcionará en modo offline.');
+        });
+
+        // Manejar cambios de conectividad
+        window.addEventListener('online', function() {
+            console.log('Conexión restaurada');
+            updateConnectionStatus(true);
+            if (database) {
+                database.goOnline();
+                processSyncQueue();
+            }
+        });
+
+        window.addEventListener('offline', function() {
+            console.log('Conexión perdida');
+            updateConnectionStatus(false);
         });
 
         // Logs de depuración
-        console.log('Script cargado completamente');
+        console.log('Script cargado completamente con sincronización mejorada');
         console.log('Configuración de atenciones:', attentionRoute.length, 'tipos');
     </script>
 </body>
