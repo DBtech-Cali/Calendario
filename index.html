@@ -516,38 +516,39 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
 
     <script>
-        // Configuración Firebase - REEMPLAZA ESTOS VALORES CON TU CONFIGURACIÓN
-const firebaseConfig = {
-  apiKey: "AIzaSyBL-oAE3Mam_nwRTME-Rt87KE1VAJ9ieQs",
-  authDomain: "emj-db.firebaseapp.com",
-  databaseURL: "https://emj-db-default-rtdb.firebaseio.com",
-  projectId: "emj-db",
-  storageBucket: "emj-db.firebasestorage.app",
-  messagingSenderId: "382459743103",
-  appId: "1:382459743103:web:94361482f911749575e84a"
-};
+        // Configuración Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyBL-oAE3Mam_nwRTME-Rt87KE1VAJ9ieQs",
+            authDomain: "emj-db.firebaseapp.com",
+            databaseURL: "https://emj-db-default-rtdb.firebaseio.com",
+            projectId: "emj-db",
+            storageBucket: "emj-db.firebasestorage.app",
+            messagingSenderId: "382459743103",
+            appId: "1:382459743103:web:94361482f911749575e84a"
+        };
 
-        // Configuración de la ruta de atención
+        // Configuración de la ruta de atención actualizada
         const attentionRoute = [
-            { name: 'PRELIMINAR', days: 9 },
-            { name: 'INTEGRADORA', days: 22 },
-            { name: 'PLAN', days: 30 },
-            { name: 'ATENCIÓN0.1', days: 45 },
-            { name: 'ATENCIÓN0.2', days: 60 },
-            { name: 'ATENCIÓN0.3', days: 90 },
-            { name: 'ATENCIÓN0.4', days: 110 },
-            { name: 'SEGUIMIENTO1', days: 120 },
-            { name: 'ATENCIÓN1.1', days: 150 },
-            { name: 'ATENCIÓN1.2', days: 180 },
-            { name: 'ATENCIÓN1.3', days: 200 },
-            { name: 'SEGUIMIENTO2', days: 210 },
-            { name: 'ATENCIÓN2', days: 255 },
-            { name: 'SEGUIMIENTO3', days: 300 },
-            { name: 'ATENCIÓN3', days: 345 },
-            { name: 'SEGUIMIENTO4', days: 390 },
-            { name: 'ATENCIÓN4', days: 435 },
-            { name: 'SEGUIMIENTO5', days: 480 },
-            { name: 'ATENCIÓN5', days: 500 }
+            { name: 'PRELIMINAR', type: 'days_from_start', value: 9 },
+            { name: 'INTEGRADORA', type: 'days_from_start', value: 22 },
+            { name: 'PLAN', type: 'months_from_start', value: 1 },
+            { name: 'ATENCIÓN0.1', type: 'days_from_plan', value: 15 },
+            { name: 'ATENCIÓN0.2', type: 'months_from_plan', value: 1 },
+            { name: 'ATENCIÓN0.3', type: 'months_from_plan', value: 2 },
+            { name: 'ATENCIÓN0.4', type: 'days_from_start', value: 110 },
+            { name: 'SEGUIMIENTO1', type: 'months_from_plan', value: 3 },
+            { name: 'ATENCIÓN1.1', type: 'months_from_plan', value: 4 },
+            { name: 'ATENCIÓN1.2', type: 'months_from_plan', value: 5 },
+            { name: 'ATENCIÓN1.3', type: 'days_from_start', value: 200 },
+            { name: 'SEGUIMIENTO2', type: 'months_from_plan', value: 6 },
+            { name: 'ATENCIÓN2', type: 'days_from_start', value: 255 },
+            { name: 'SEGUIMIENTO3', type: 'months_from_plan', value: 9 },
+            { name: 'ATENCIÓN3', type: 'days_from_start', value: 345 },
+            { name: 'SEGUIMIENTO4', type: 'months_from_plan', value: 12 },
+            { name: 'ATENCIÓN4', type: 'days_from_start', value: 435 },
+            { name: 'SEGUIMIENTO5', type: 'months_from_plan', value: 15 },
+            { name: 'ATENCIÓN5', type: 'days_from_start', value: 500 },
+            { name: 'SEGUIMIENTO6', type: 'months_from_plan', value: 18 }
         ];
 
         // Variables globales
@@ -558,18 +559,72 @@ const firebaseConfig = {
         let database = null;
         let isOnline = false;
 
-        // Inicialización
+        // Función para calcular fechas de atención
+        function calculateAttentionDate(startDate, attention) {
+            const start = new Date(startDate);
+            let attentionDate = new Date(start);
+
+            switch (attention.type) {
+                case 'days_from_start':
+                    attentionDate.setDate(start.getDate() + attention.value);
+                    break;
+                    
+                case 'months_from_start':
+                    attentionDate.setMonth(start.getMonth() + attention.value);
+                    break;
+                    
+                case 'days_from_plan':
+                    // Primero calculamos la fecha del PLAN (1 mes desde el inicio)
+                    const planDate = new Date(start);
+                    planDate.setMonth(start.getMonth() + 1);
+                    // Luego agregamos los días desde el PLAN
+                    attentionDate = new Date(planDate);
+                    attentionDate.setDate(planDate.getDate() + attention.value);
+                    break;
+                    
+                case 'months_from_plan':
+                    // Primero calculamos la fecha del PLAN (1 mes desde el inicio)
+                    const planDate2 = new Date(start);
+                    planDate2.setMonth(start.getMonth() + 1);
+                    // Luego agregamos los meses desde el PLAN
+                    attentionDate = new Date(planDate2);
+                    attentionDate.setMonth(planDate2.getMonth() + attention.value);
+                    break;
+            }
+
+            return attentionDate;
+        }
+
+        // Inicialización cuando se carga la página
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('Página cargada, inicializando...');
+            
+            // Establecer fecha actual en el input
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('userDate').value = today;
+            
+            // Inicializar Firebase
             initializeFirebase();
-            document.getElementById('userDate').value = new Date().toISOString().split('T')[0];
+            
+            // Cargar datos iniciales si Firebase falla
+            setTimeout(() => {
+                if (!isOnline) {
+                    console.log('Firebase no conectado, cargando datos locales');
+                    loadLocalData();
+                }
+            }, 3000);
+            
+            // Mostrar calendario inicial
+            updateCalendar();
         });
 
         // Inicializar Firebase
         function initializeFirebase() {
             try {
-                // Verificar si la configuración está completa
-                if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "TU_API_KEY") {
-                    throw new Error("Por favor configura Firebase correctamente");
+                console.log('Inicializando Firebase...');
+                
+                if (!window.firebase) {
+                    throw new Error("Firebase SDK no cargado");
                 }
 
                 firebase.initializeApp(firebaseConfig);
@@ -578,40 +633,75 @@ const firebaseConfig = {
                 // Configurar listeners para datos en tiempo real
                 setupRealtimeListeners();
                 
-                updateConnectionStatus(true);
+                console.log('Firebase inicializado correctamente');
                 
             } catch (error) {
                 console.error('Error inicializando Firebase:', error);
-                showError('Error de conexión: ' + error.message);
+                showError('Error de conexión: ' + error.message + '. Usando modo offline.');
                 updateConnectionStatus(false);
-                
-                // Cargar datos locales como fallback
                 loadLocalData();
             }
         }
 
         // Configurar listeners de Firebase
         function setupRealtimeListeners() {
-            // Listener para usuarios
-            database.ref('users').on('value', (snapshot) => {
+            try {
+                // Listener de conexión
+                database.ref('.info/connected').on('value', (snapshot) => {
+                    const connected = snapshot.val();
+                    console.log('Estado de conexión:', connected);
+                    updateConnectionStatus(connected);
+                    
+                    if (connected && users.length === 0) {
+                        // Cargar datos cuando se conecte
+                        loadFirebaseData();
+                    }
+                });
+
+                // Listener para usuarios
+                database.ref('users').on('value', (snapshot) => {
+                    console.log('Datos de usuarios actualizados');
+                    const data = snapshot.val();
+                    users = data ? Object.values(data) : [];
+                    updateUserList();
+                    updateCalendar();
+                    updateStats();
+                });
+
+                // Listener para atenciones
+                database.ref('attentions').on('value', (snapshot) => {
+                    console.log('Datos de atenciones actualizados');
+                    const data = snapshot.val();
+                    attentions = data || {};
+                    updateCalendar();
+                    updateStats();
+                });
+
+            } catch (error) {
+                console.error('Error configurando listeners:', error);
+                showError('Error configurando listeners: ' + error.message);
+            }
+        }
+
+        // Cargar datos de Firebase
+        function loadFirebaseData() {
+            database.ref('users').once('value').then((snapshot) => {
                 const data = snapshot.val();
                 users = data ? Object.values(data) : [];
                 updateUserList();
                 updateCalendar();
                 updateStats();
+            }).catch((error) => {
+                console.error('Error cargando usuarios:', error);
             });
 
-            // Listener para atenciones
-            database.ref('attentions').on('value', (snapshot) => {
+            database.ref('attentions').once('value').then((snapshot) => {
                 const data = snapshot.val();
                 attentions = data || {};
                 updateCalendar();
                 updateStats();
-            });
-
-            // Listener de conexión
-            database.ref('.info/connected').on('value', (snapshot) => {
-                updateConnectionStatus(snapshot.val());
+            }).catch((error) => {
+                console.error('Error cargando atenciones:', error);
             });
         }
 
@@ -635,39 +725,70 @@ const firebaseConfig = {
             errorContainer.innerHTML = `<div class="error-message">${message}</div>`;
             setTimeout(() => {
                 errorContainer.innerHTML = '';
-            }, 5000);
+            }, 8000);
         }
 
         // Cargar datos locales como fallback
         function loadLocalData() {
-            users = JSON.parse(localStorage.getItem('users') || '[]');
-            attentions = JSON.parse(localStorage.getItem('attentions') || '{}');
-            updateUserList();
-            updateCalendar();
-            updateStats();
-        }
-
-        // Guardar datos
-        function saveData() {
-            if (isOnline && database) {
-                // Guardar en Firebase
-                database.ref('users').set(users.reduce((obj, user) => {
-                    obj[user.id] = user;
-                    return obj;
-                }, {}));
-                
-                database.ref('attentions').set(attentions);
-            } else {
-                // Guardar localmente como fallback
-                localStorage.setItem('users', JSON.stringify(users));
-                localStorage.setItem('attentions', JSON.stringify(attentions));
+            console.log('Cargando datos locales...');
+            try {
+                users = JSON.parse(localStorage.getItem('emj_users') || '[]');
+                attentions = JSON.parse(localStorage.getItem('emj_attentions') || '{}');
+                console.log('Datos locales cargados:', users.length, 'usuarios');
+                updateUserList();
+                updateCalendar();
+                updateStats();
+            } catch (error) {
+                console.error('Error cargando datos locales:', error);
+                users = [];
+                attentions = {};
+                updateUserList();
+                updateCalendar();
+                updateStats();
             }
         }
 
-        // Funciones de gestión de usuarios
+        // Guardar datos - función mejorada para sincronización
+        async function saveData() {
+            if (isOnline && database) {
+                try {
+                    // Guardar usuarios en Firebase
+                    const usersObj = {};
+                    users.forEach(user => {
+                        usersObj[user.id] = user;
+                    });
+                    await database.ref('users').set(usersObj);
+                    
+                    // Guardar atenciones en Firebase
+                    await database.ref('attentions').set(attentions);
+                    
+                    console.log('Datos sincronizados con Firebase exitosamente');
+                } catch (error) {
+                    console.error('Error guardando en Firebase, usando backup local:', error);
+                    saveLocalData();
+                }
+            } else {
+                saveLocalData();
+            }
+        }
+
+        // Guardar datos localmente
+        function saveLocalData() {
+            try {
+                localStorage.setItem('emj_users', JSON.stringify(users));
+                localStorage.setItem('emj_attentions', JSON.stringify(attentions));
+                console.log('Datos guardados localmente');
+            } catch (error) {
+                console.error('Error guardando datos localmente:', error);
+            }
+        }
+
+        // Agregar usuario
         async function addUser() {
             const name = document.getElementById('userName').value.trim();
             const date = document.getElementById('userDate').value;
+            
+            console.log('Agregando usuario:', name, date);
             
             if (!name || !date) {
                 alert('Por favor, completa todos los campos');
@@ -686,19 +807,33 @@ const firebaseConfig = {
                     egreso: false
                 };
                 
+                // Agregar a la lista local primero
+                users.push(user);
+                
+                // Guardar en Firebase si está conectado
                 if (isOnline && database) {
-                    await database.ref(`users/${user.id}`).set(user);
+                    try {
+                        await database.ref(`users/${user.id}`).set(user);
+                        console.log('Usuario guardado en Firebase:', user.id);
+                    } catch (firebaseError) {
+                        console.error('Error guardando en Firebase, usando local:', firebaseError);
+                        saveLocalData();
+                    }
                 } else {
-                    users.push(user);
-                    saveData();
-                    updateUserList();
-                    updateCalendar();
-                    updateStats();
+                    // Guardar localmente
+                    saveLocalData();
                 }
+                
+                // Actualizar interfaz
+                updateUserList();
+                updateCalendar();
+                updateStats();
                 
                 // Limpiar formulario
                 document.getElementById('userName').value = '';
                 document.getElementById('userDate').value = new Date().toISOString().split('T')[0];
+                
+                console.log('Usuario agregado exitosamente');
                 
             } catch (error) {
                 console.error('Error agregando usuario:', error);
@@ -709,35 +844,53 @@ const firebaseConfig = {
             }
         }
 
+        // Eliminar usuario
         async function removeUser(userId) {
             if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
                 try {
+                    // Eliminar de la lista local
+                    users = users.filter(user => user.id !== userId);
+                    
+                    // Eliminar atenciones del usuario
+                    Object.keys(attentions).forEach(key => {
+                        if (key.startsWith(userId + '_')) {
+                            delete attentions[key];
+                        }
+                    });
+                    
+                    // Eliminar de Firebase si está conectado
                     if (isOnline && database) {
-                        await database.ref(`users/${userId}`).remove();
-                        
-                        // Eliminar atenciones del usuario
-                        const userAttentions = {};
-                        Object.keys(attentions).forEach(key => {
-                            if (key.startsWith(userId + '_')) {
-                                userAttentions[key] = null;
+                        try {
+                            await database.ref(`users/${userId}`).remove();
+                            
+                            // Eliminar atenciones del usuario en Firebase
+                            const userAttentions = {};
+                            Object.keys(attentions).forEach(key => {
+                                if (key.startsWith(userId + '_')) {
+                                    userAttentions[key] = null; // null elimina en Firebase
+                                }
+                            });
+                            
+                            if (Object.keys(userAttentions).length > 0) {
+                                await database.ref('attentions').update(userAttentions);
                             }
-                        });
-                        
-                        if (Object.keys(userAttentions).length > 0) {
-                            await database.ref('attentions').update(userAttentions);
+                            
+                            console.log('Usuario eliminado de Firebase:', userId);
+                        } catch (firebaseError) {
+                            console.error('Error eliminando de Firebase, usando local:', firebaseError);
+                            saveLocalData();
                         }
                     } else {
-                        users = users.filter(user => user.id !== userId);
-                        Object.keys(attentions).forEach(key => {
-                            if (key.startsWith(userId + '_')) {
-                                delete attentions[key];
-                            }
-                        });
-                        saveData();
-                        updateUserList();
-                        updateCalendar();
-                        updateStats();
+                        saveLocalData();
                     }
+                    
+                    // Actualizar interfaz
+                    updateUserList();
+                    updateCalendar();
+                    updateStats();
+                    
+                    console.log('Usuario eliminado exitosamente');
+                    
                 } catch (error) {
                     console.error('Error eliminando usuario:', error);
                     showError('Error al eliminar usuario: ' + error.message);
@@ -745,6 +898,7 @@ const firebaseConfig = {
             }
         }
 
+        // Marcar egreso
         async function markEgreso() {
             if (currentModalData) {
                 const egresoBtn = document.getElementById('egresoBtn');
@@ -752,19 +906,30 @@ const firebaseConfig = {
                 egresoBtn.textContent = '⏳ Procesando...';
                 
                 try {
-                    if (isOnline && database) {
-                        await database.ref(`users/${currentModalData.userId}/egreso`).set(true);
-                    } else {
-                        const user = users.find(u => u.id === currentModalData.userId);
-                        if (user) {
-                            user.egreso = true;
-                            saveData();
-                            updateUserList();
-                            updateCalendar();
-                            updateStats();
+                    // Actualizar localmente
+                    const user = users.find(u => u.id === currentModalData.userId);
+                    if (user) {
+                        user.egreso = true;
+                        
+                        // Actualizar en Firebase si está conectado
+                        if (isOnline && database) {
+                            try {
+                                await database.ref(`users/${currentModalData.userId}/egreso`).set(true);
+                                console.log('Egreso marcado en Firebase:', currentModalData.userId);
+                            } catch (firebaseError) {
+                                console.error('Error marcando egreso en Firebase:', firebaseError);
+                                saveLocalData();
+                            }
+                        } else {
+                            saveLocalData();
                         }
+                        
+                        // Actualizar interfaz
+                        updateUserList();
+                        updateCalendar();
+                        updateStats();
+                        closeModal();
                     }
-                    closeModal();
                 } catch (error) {
                     console.error('Error marcando egreso:', error);
                     showError('Error al marcar egreso: ' + error.message);
@@ -775,11 +940,12 @@ const firebaseConfig = {
             }
         }
 
-        // Funciones del calendario
+        // Actualizar calendario
         function updateCalendar() {
             const year = currentDate.getFullYear();
             const month = currentDate.getMonth();
             
+            // Actualizar título del mes
             document.getElementById('currentMonth').textContent = 
                 currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
                     .replace(/^./, str => str.toUpperCase());
@@ -844,22 +1010,22 @@ const firebaseConfig = {
                 
                 calendarGrid.appendChild(dayElement);
             }
+            
+            console.log('Calendario actualizado para', currentDate.getMonth() + 1, '/', currentDate.getFullYear());
         }
 
+        // Obtener atenciones para una fecha específica
         function getAttentionsForDate(date) {
             const attentionsForDay = [];
             users.filter(user => !user.egreso).forEach(user => {
-                const startDate = new Date(user.startDate);
                 attentionRoute.forEach(attention => {
-                    const attentionDate = new Date(startDate);
-                    attentionDate.setDate(startDate.getDate() + attention.days);
+                    const attentionDate = calculateAttentionDate(user.startDate, attention);
                     
                     if (attentionDate.toDateString() === date.toDateString()) {
                         attentionsForDay.push({
                             user: user,
                             type: attention.name,
                             date: attentionDate,
-                            days: attention.days,
                             userId: user.id
                         });
                     }
@@ -868,6 +1034,7 @@ const firebaseConfig = {
             return attentionsForDay;
         }
 
+        // Navegación del calendario
         function previousMonth() {
             currentDate.setMonth(currentDate.getMonth() - 1);
             updateCalendar();
@@ -901,6 +1068,7 @@ const firebaseConfig = {
             document.getElementById('attentionModal').style.display = 'block';
         }
 
+        // Actualizar visual de atenciones
         function updateAttentionVisual() {
             ['psicologia', 'trabajoSocial', 'pedagogia', 'nutricion'].forEach(service => {
                 const checkbox = document.getElementById(service);
@@ -913,6 +1081,7 @@ const firebaseConfig = {
             });
         }
 
+        // Guardar atención
         async function saveAttention() {
             if (!currentModalData) return;
             
@@ -928,15 +1097,30 @@ const firebaseConfig = {
                     attentionData[service] = document.getElementById(service).checked;
                 });
                 
+                // Actualizar en memoria primero
+                attentions[attentionKey] = attentionData;
+                
+                // Guardar específicamente en Firebase si está conectado
                 if (isOnline && database) {
-                    await database.ref(`attentions/${attentionKey}`).set(attentionData);
+                    try {
+                        await database.ref(`attentions/${attentionKey}`).set(attentionData);
+                        console.log('Atención guardada en Firebase:', attentionKey);
+                    } catch (firebaseError) {
+                        console.error('Error guardando en Firebase, usando local:', firebaseError);
+                        saveLocalData();
+                    }
                 } else {
-                    attentions[attentionKey] = attentionData;
-                    saveData();
-                    updateStats();
+                    // Guardar localmente
+                    saveLocalData();
                 }
                 
+                // Actualizar interfaz
+                updateCalendar();
+                updateStats();
+                
                 closeModal();
+                console.log('Atención guardada exitosamente');
+                
             } catch (error) {
                 console.error('Error guardando atención:', error);
                 showError('Error al guardar atención: ' + error.message);
@@ -946,6 +1130,7 @@ const firebaseConfig = {
             }
         }
 
+        // Cerrar modal
         function closeModal() {
             document.getElementById('attentionModal').style.display = 'none';
             currentModalData = null;
@@ -972,6 +1157,8 @@ const firebaseConfig = {
                 `;
                 userList.appendChild(userItem);
             });
+            
+            console.log('Lista de usuarios actualizada:', users.length, 'usuarios');
         }
 
         // Actualizar estadísticas del mes
@@ -1014,9 +1201,16 @@ const firebaseConfig = {
             // Actualizar barra de progreso
             const progressFill = document.getElementById('progressFill');
             progressFill.style.width = percentage + '%';
+            
+            console.log('Estadísticas actualizadas:', {
+                activeUsers,
+                monthAttentions,
+                completed,
+                percentage: percentage + '%'
+            });
         }
 
-        // Cerrar modal al hacer clic fuera
+        // Event listeners
         window.onclick = function(event) {
             const modal = document.getElementById('attentionModal');
             if (event.target === modal) {
@@ -1024,11 +1218,20 @@ const firebaseConfig = {
             }
         }
 
-        // Manejar errores de Firebase
-        window.addEventListener('unhandledrejection', function(event) {
-            console.error('Error no manejado:', event.reason);
-            showError('Ocurrió un error inesperado. Por favor, recarga la página.');
+        // Manejar errores no capturados
+        window.addEventListener('error', function(event) {
+            console.error('Error global:', event.error);
+            showError('Ocurrió un error inesperado. Revisa la consola para más detalles.');
         });
+
+        window.addEventListener('unhandledrejection', function(event) {
+            console.error('Promesa rechazada:', event.reason);
+            showError('Error de conexión. La aplicación funcionará en modo offline.');
+        });
+
+        // Logs de depuración
+        console.log('Script cargado completamente');
+        console.log('Configuración de atenciones:', attentionRoute.length, 'tipos');
     </script>
 </body>
 </html>
