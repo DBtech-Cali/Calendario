@@ -28,7 +28,7 @@
         }
 
         .header {
-            background: linear-gradient(45deg, #2c3e50, #4a6741);
+            background: linear-gradient(to top, #f77062 0%, #fe5196 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -1149,7 +1149,7 @@
                     const attentionKey = `${attention.user.id}_${attention.type}`;
                     const savedAttention = attentions[attentionKey];
                     const completedServices = savedAttention ? 
-                        Object.values(savedAttention).filter(Boolean).length : 0;
+                        Object.values(savedAttention).filter(v => v === true).length : 0;
                     
                     if (completedServices === 4) {
                         marker.classList.add('completed');
