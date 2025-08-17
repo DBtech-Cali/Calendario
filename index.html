@@ -13,7 +13,7 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(to top, #ff0844 0%, #ffb199 100%);
+            background: #91092a;
             min-height: 100vh;
             padding: 20px;
         }
@@ -1341,7 +1341,7 @@
                     const savedAttention = attentions[attentionKey];
                     totalAttentions++;
                     
-                    if (savedAttention && Object.values(savedAttention).filter(Boolean).length === 4) {
+                    if (savedAttention && Object.values(savedAttention).filter(v => v === true).length === 4) {
                         completedAttentions++;
                     }
                 });
@@ -1386,7 +1386,7 @@
                     const savedAttention = attentions[attentionKey];
                     
                     if (savedAttention) {
-                        const completedServices = Object.values(savedAttention).filter(Boolean).length;
+                        const completedServices = Object.values(savedAttention).filter(v => v === true).length;
                         if (completedServices === 4) {
                             completed++;
                         }
